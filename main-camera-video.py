@@ -15,7 +15,7 @@ class NPUInferencer:
         self.total_inference_time = 0
         self.frame_count = 0
         # 创建视频保存目录
-        self.video_dir = ".video"
+        self.video_dir = "./video"
         os.makedirs(self.video_dir, exist_ok=True)
 
         # 类别映射表
