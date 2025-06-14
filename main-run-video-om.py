@@ -12,7 +12,7 @@ class NPUInferencer:
         :param conf_threshold: 置信度阈值
         """
         # 加载NPU模型[3,7](@ref)
-        self.model = InferSession(device_id=0, model_path=model_path)
+        self.model = InferSession(device_id=0, model_path=model_path,debug=True)
         self.conf_threshold = conf_threshold
         # 获取输入输出信息[9](@ref)
         self.input_shape = self.model.get_inputs()[0].shape  # [1,3,640,640]
@@ -32,25 +32,38 @@ class NPUInferencer:
         return img
 
     def postprocess(self, outputs, frame):
-        """
-        后处理：解析NPU输出并绘制结果
-        :param outputs: NPU输出数据
-        :param frame: 原始图像帧
-        """
-        # YOLOv8输出格式: [1,84,8400] (4坐标+80类别)[7](@ref)
-        detections = outputs[0][0].transpose(1, 0)  # 转置为[8400,84]
+        # 获取原始帧尺寸
+        h, w = frame.shape[:2]
 
-        # 过滤低置信度框
-        conf_mask = detections[:, 4] > self.conf_threshold
-        detections = detections[conf_mask]
+        # 统一输出格式
+        if outputs[0].shape == (1, 8400, 84):  # NPU优化后的格式
+            detections = outputs[0][0]
+        else:
+            detections = outputs[0][0].transpose(1, 0)  # 标准格式
 
-        # 绘制检测框
-        for *xyxy, conf, cls_id in detections:
-            x1, y1, x2, y2 = map(int, xyxy[:4])
+        # 空结果处理
+        if detections.size == 0:
+            return frame
+
+        # 遍历检测结果
+        for row in detections:
+            if len(row) < 6:  # 跳过无效数据
+                continue
+
+            # 安全解包坐标
+            try:
+                x1, y1, x2, y2, conf, cls_id = row[:6]
+                x1, y1, x2, y2 = int(x1 * w), int(y1 * h), int(x2 * w), int(y2 * h)
+            except ValueError:
+                continue  # 格式错误时跳过
+
+            # 置信度过滤
+            if conf < self.conf_threshold:
+                continue
+
             # 绘制边界框
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            # 绘制标签
-            label = f"Class {int(cls_id)} {conf:.2f}"
+            label = f"{self.class_names[cls_id]} {conf:.2f}"
             cv2.putText(frame, label, (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         return frame
