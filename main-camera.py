@@ -151,5 +151,5 @@ if __name__ == '__main__':
     )
     inferencer.predict_from_camera(
         camera_index=0,  # 使用第一个USB摄像头
-        show=True
+        show=False
     )
