@@ -30,6 +30,7 @@ class NPUInferencer:
         self.segment_count = 0
         self.out_video = None
         self.current_video_path = ""
+        self.actual_fps = 30.0  # 默认帧率
 
     def preprocess(self, frame):
         start_time = time.perf_counter()
@@ -116,23 +117,67 @@ class NPUInferencer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.current_video_path = os.path.join(
             self.video_dir,
-            f"segment_{self.segment_count}_{timestamp}.avi"
+            f"segment_{self.segment_count}_{timestamp}.mp4"  # 修改为MP4格式[1,3](@ref)
         )
 
-        # 设置视频编码器（使用XVID编码，兼容性好）[2,3](@ref)
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        # 使用兼容性更好的H.264编码器[5](@ref)
+        # 尝试多种编码器确保兼容性
+        fourcc_options = [
+            cv2.VideoWriter_fourcc(*'avc1'),  # 首选H.264编码[5](@ref)
+            cv2.VideoWriter_fourcc(*'mp4v'),  # 备用MPEG-4编码[1](@ref)
+            cv2.VideoWriter_fourcc(*'X264'),  # 开源H.264实现
+            cv2.VideoWriter_fourcc(*'MJPG')  # 兼容性最好的编码器[2](@ref)
+        ]
 
-        # 创建VideoWriter对象
-        self.out_video = cv2.VideoWriter(
-            self.current_video_path,
-            fourcc,
-            fps,
-            (width, height)
-        )
+        # 确保帧率在合理范围内(1-60FPS)
+        safe_fps = max(1, min(60, fps))
+        print(f"安全帧率设置: {safe_fps}FPS")
+
+        # 尝试不同编码器直到成功
+        for fourcc in fourcc_options:
+            try:
+                self.out_video = cv2.VideoWriter(
+                    self.current_video_path,
+                    fourcc,
+                    safe_fps,
+                    (width, height)
+                )
+
+                # 检查是否成功初始化
+                if self.out_video.isOpened():
+                    print(f"✅ 成功使用编码器: {fourcc} 初始化视频写入器")
+                    break
+                else:
+                    print(f"⚠️ 编码器 {fourcc} 初始化失败，尝试下一个选项")
+                    self.out_video = None
+            except Exception as e:
+                print(f"编码器 {fourcc} 初始化错误: {str(e)}")
+                self.out_video = None
+
+        # 如果所有编码器都失败
+        if self.out_video is None or not self.out_video.isOpened():
+            print(f"❌ 错误: 无法初始化任何视频编码器，请检查系统支持")
+            print("尝试使用默认编码器创建AVI文件")
+            # 回退到AVI格式和XVID编码器[2](@ref)
+            self.current_video_path = os.path.join(
+                self.video_dir,
+                f"segment_{self.segment_count}_{timestamp}.avi"
+            )
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            self.out_video = cv2.VideoWriter(
+                self.current_video_path,
+                fourcc,
+                safe_fps,
+                (width, height)
+            )
+            if not self.out_video.isOpened():
+                print(f"❌ 严重错误: 无法初始化任何视频写入器")
+                return False
 
         print(f"\n🔴 开始录制新视频片段: {self.current_video_path}")
         self.segment_start_time = time.time()
         self.segment_count += 1
+        return True
 
     def predict_from_camera(self, show=True, camera_index=0):
         # 设置摄像头参数
@@ -153,14 +198,21 @@ class NPUInferencer:
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 0:
             fps = 30.0  # 默认值
+        self.actual_fps = fps  # 保存实际帧率
+
+        print(f"摄像头参数: {width}x{height} @ {fps:.1f}FPS")
 
         # 初始化第一个视频写入器
-        self.init_video_writer(width, height, fps)
+        if not self.init_video_writer(width, height, fps):
+            print("❌ 视频写入器初始化失败，程序终止")
+            cap.release()
+            return
 
         # 性能监控
         inference_times = []
         last_report_time = time.time()
         report_interval = 5  # 性能报告间隔(秒)
+        last_frame_time = time.time()
 
         try:
             while True:
@@ -192,16 +244,23 @@ class NPUInferencer:
                 # 帧处理总耗时
                 frame_elapsed = (time.perf_counter() - frame_start) * 1000
 
-                # 检查是否需要创建新的视频片段
+                # 计算实际帧率
                 current_time = time.time()
+                actual_fps = 1.0 / (current_time - last_frame_time)
+                last_frame_time = current_time
+
+                # 检查是否需要创建新的视频片段
                 if current_time - self.segment_start_time >= self.segment_interval:
                     # 关闭当前视频文件
                     if self.out_video is not None:
                         self.out_video.release()
                         print(f"🟢 视频片段已保存: {self.current_video_path}")
+                        # 打印实际保存的视频帧数
+                        segment_frame_count = int(self.segment_interval * self.actual_fps)
+                        print(f"保存帧数: {segment_frame_count}, 实际FPS: {actual_fps:.1f}")
 
                     # 初始化新的视频写入器
-                    self.init_video_writer(width, height, fps)
+                    self.init_video_writer(width, height, self.actual_fps)
 
                 # 将标记后的帧写入当前视频文件
                 if self.out_video is not None:
@@ -209,16 +268,22 @@ class NPUInferencer:
 
                 # 显示处理后的帧
                 if show:
+                    # 在画面上显示实际FPS
+                    fps_text = f"FPS: {actual_fps:.1f}"
+                    cv2.putText(result_frame, fps_text, (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
                     cv2.imshow('NPU加速-YOLO', result_frame)
 
                 # 定时显示性能报告
                 if current_time - last_report_time >= report_interval:
                     avg_time = np.mean(inference_times) if inference_times else 0
-                    fps = 1000 / avg_time if avg_time > 0 else 0
-                    print(f"\n实时性能报告 (过去{report_interval}秒):")
+                    fps_estimate = 1000 / avg_time if avg_time > 0 else 0
+                    print(f"\n📊 实时性能报告 (过去{report_interval}秒):")
                     print(f"- 处理帧数: {len(inference_times)}")
                     print(f"- 平均推理耗时: {avg_time:.2f}ms")
-                    print(f"- 预估FPS: {fps:.1f}")
+                    print(f"- 预估FPS: {fps_estimate:.1f}")
+                    print(f"- 实际FPS: {actual_fps:.1f}")
                     print("-" * 40)
 
                     # 重置计数器和时间戳
@@ -232,8 +297,9 @@ class NPUInferencer:
         finally:
             # 释放资源
             cap.release()
-            if self.out_video is not None:
+            if self.out_video is not None and self.out_video.isOpened():
                 self.out_video.release()
+                print(f"🟢 最后一个视频片段已保存: {self.current_video_path}")
             cv2.destroyAllWindows()
 
             # 最终性能总结报告
