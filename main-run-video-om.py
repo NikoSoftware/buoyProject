@@ -114,5 +114,5 @@ if __name__ == '__main__':
     )
     inferencer.predict(
         source=r'./datasets/test/30386095338-1-192.mp4',
-        show=True
+        show=False
     )
