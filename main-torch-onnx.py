@@ -20,7 +20,7 @@ if __name__ == '__main__':
         "best.onnx",  # 输出文件名
         export_params=True,       # 包含权重
         opset_version=13,        # 推荐 >=11（支持 NPU 算子）[3,7](@ref)
-        do_constant_folding=True,  # 常量折叠优化（减少计算量）[6,7](@ref)
+        do_constant_folding=False,  # 常量折叠优化（减少计算量）[6,7](@ref)
         input_names=["images"],    # 输入节点名（与 OM 匹配）
         output_names=["output"],   # 输出节点名（避免默认名冲突）
         dynamic_axes=None,        # **固定维度**（NPU 需静态 shape）[5](@ref)
