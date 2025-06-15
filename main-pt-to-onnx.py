@@ -10,8 +10,9 @@ if __name__ == '__main__':
     model.export(
         format="onnx",  # 输出格式
         imgsz=640,  # 输入尺寸（与训练一致）
-        opset=13,  # ONNX算子集版本（推荐12+）
-        simplify=True,  # 启用模型简化（移除冗余节点）
+        opset=12,  # ONNX算子集版本（推荐12+）
+        simplify=False,  # 启用模型简化（移除冗余节点）
         dynamic=True,  # 支持动态输入尺寸（如batch/分辨率）
+        int8=True,
         batch=1  # 指定默认batch_size
     )
