@@ -66,9 +66,11 @@ class NPUInferencer:
 
         for row in detections:
             if len(row) < 6:
+                print("未检测到数据")
                 continue
             try:
                 x1, y1, x2, y2, conf, cls_id = row[:6]
+                print("获得坐标",x1, y1, x2, y2, conf, cls_id)
                 if conf < self.conf_threshold:
                     continue
 
