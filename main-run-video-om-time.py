@@ -66,7 +66,6 @@ class NPUInferencer:
 
         for row in detections:
             if len(row) < 6:
-                print("未检测到数据")
                 continue
             try:
                 x1, y1, x2, y2, conf, cls_id = row[:6]
@@ -331,7 +330,7 @@ if __name__ == '__main__':
 
     inferencer = NPUInferencer(
         model_path="./runs/train/train6/weights/best.om",
-        conf_threshold=0.3,
+        conf_threshold=0.1,
     )
 
     # 设置自定义类别映射
