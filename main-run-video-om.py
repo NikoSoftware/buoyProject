@@ -110,7 +110,7 @@ if __name__ == '__main__':
     # 使用示例（需提前转换OM模型）
     inferencer = NPUInferencer(
         model_path="./runs/train/train6/weights/best.om",  # 替换为转换后的OM模型
-        conf_threshold=0.3
+        conf_threshold=0.1
     )
     inferencer.predict(
         source=r'./datasets/test/30386095338-1-192.mp4',

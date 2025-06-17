@@ -50,8 +50,8 @@
                 "match_times": "5"
             },
             "ConstToAttrStridedSliceV2Fusion": {
-                "effect_times": "18",
-                "match_times": "18"
+                "effect_times": "2",
+                "match_times": "2"
             },
             "Conv2DWinogradFusionPass": {
                 "effect_times": "0",
@@ -123,7 +123,7 @@
             },
             "RemoveCastFusionPass": {
                 "effect_times": "0",
-                "match_times": "184"
+                "match_times": "181"
             },
             "ReshapeTransposeFusionPass": {
                 "effect_times": "0",
@@ -143,7 +143,7 @@
             },
             "StridedSliceRemovePass": {
                 "effect_times": "0",
-                "match_times": "18"
+                "match_times": "2"
             },
             "SubFusionPass": {
                 "effect_times": "0",
@@ -155,7 +155,7 @@
             },
             "TransdataCastFusionPass": {
                 "effect_times": "0",
-                "match_times": "104"
+                "match_times": "101"
             },
             "TransdataFz2FzgFusionPass": {
                 "effect_times": "0",
@@ -174,16 +174,16 @@
                 "match_times": "23"
             },
             "ZSplitVDFusionPass": {
-                "effect_times": "3",
-                "match_times": "3"
+                "effect_times": "11",
+                "match_times": "11"
             },
             "ZSplitVDFusionPassV2": {
-                "effect_times": "3",
-                "match_times": "3"
+                "effect_times": "11",
+                "match_times": "11"
             },
             "ZSplitVFusionPass": {
-                "effect_times": "3",
-                "match_times": "3"
+                "effect_times": "11",
+                "match_times": "11"
             },
             "ZZMatmulNd2nzTransdataFusionPass": {
                 "effect_times": "0",
