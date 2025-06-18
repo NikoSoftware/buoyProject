@@ -295,6 +295,6 @@ if __name__ == '__main__':
     img_path = "./datasets/test/20250611213828.png"
     image = cv2.imread(img_path)
 
-    # benchmark_result=yolo.benchmark(image)
-    # print(benchmark_result)
+    benchmark_result=yolo.benchmark(image)
+    print(benchmark_result)
     # # 检测并绘制结果
