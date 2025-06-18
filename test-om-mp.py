@@ -52,20 +52,21 @@ def postprocess(outputs, orig_shape):
         NMS_THRESH
     )
     
-    # 提取有效检测结果 - 修复部分
+    # 提取有效检测结果
     detections = []
-    for i in indices:
-        # 修复索引访问问题：处理numpy.int64类型
-        idx = int(i) if hasattr(i, '__int__') else (i[0] if isinstance(i, (list, tuple, np.ndarray)) else i)
-        
-        class_id = np.argmax(scores[idx])
-        confidence = scores[idx][class_id]
-        if confidence > CONF_THRESH:
-            detections.append({
-                "class": CLASS_NAMES[class_id],
-                "confidence": float(confidence),
-                "box": [int(x) for x in boxes[idx]]
-            })
+    if indices is not None:
+        for i in indices:
+            # 修复索引访问问题
+            idx = int(i) if hasattr(i, '__int__') else (i[0] if isinstance(i, (list, tuple, np.ndarray)) else i)
+            
+            class_id = np.argmax(scores[idx])
+            confidence = scores[idx][class_id]
+            if confidence > CONF_THRESH:
+                detections.append({
+                    "class": CLASS_NAMES[class_id],
+                    "confidence": float(confidence),
+                    "box": [int(x) for x in boxes[idx]]
+                })
     return detections
 
 def main():
@@ -74,7 +75,15 @@ def main():
     
     # 打开视频
     cap = cv2.VideoCapture(VIDEO_PATH)
+    if not cap.isOpened():
+        print(f"错误: 无法打开视频文件 {VIDEO_PATH}")
+        return
+    
     frame_count = 0
+    total_preprocess = 0.0
+    total_inference = 0.0
+    total_postprocess = 0.0
+    total_frame = 0.0
     start_time = time.time()
     
     while cap.isOpened():
@@ -82,21 +91,46 @@ def main():
         if not ret:
             break
             
-        # 预处理
+        # ====================== 帧开始计时 ======================
+        frame_start = time.time()
+        frame_count += 1
+        
+        # 1. 预处理计时
+        preprocess_start = time.time()
         orig_h, orig_w = frame.shape[:2]
         blob = preprocess(frame)
+        preprocess_time = time.time() - preprocess_start
         
-        # 推理
+        # 2. 推理计时
+        inference_start = time.time()
         outputs = session.infer([blob])
+        inference_time = time.time() - inference_start
         
-        # 后处理
+        # 3. 后处理计时
+        postprocess_start = time.time()
         detections = postprocess(outputs, (orig_h, orig_w))
+        postprocess_time = time.time() - postprocess_start
         
-        # 打印检测信息
-        frame_count += 1
-        print(f"\n帧 {frame_count} 检测结果:")
+        # 4. 帧总处理时间
+        frame_time = time.time() - frame_start
+        
+        # 累计时间统计
+        total_preprocess += preprocess_time
+        total_inference += inference_time
+        total_postprocess += postprocess_time
+        total_frame += frame_time
+        
+        # ====================== 打印时间信息 ======================
+        print(f"\n帧 {frame_count} 时间统计:")
+        print(f"预处理: {preprocess_time*1000:.2f}ms | "
+              f"推理: {inference_time*1000:.2f}ms | "
+              f"后处理: {postprocess_time*1000:.2f}ms | "
+              f"总帧耗时: {frame_time*1000:.2f}ms")
+        
+        # 打印检测结果
+        print(f"检测到 {len(detections)} 个目标:")
         for i, det in enumerate(detections):
-            print(f"目标 {i+1}: {det['class']} | "
+            print(f"  目标 {i+1}: {det['class']} | "
                   f"置信度: {det['confidence']:.4f} | "
                   f"位置: [{det['box'][0]}, {det['box'][1]}, {det['box'][2]}, {det['box'][3]}]")
             
@@ -114,18 +148,22 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
     
-    # 性能统计
+    # ====================== 最终性能统计 ======================
     end_time = time.time()
-    fps = frame_count / (end_time - start_time)
-    print(f"\n统计信息: 总帧数={frame_count} | 平均FPS={fps:.2f}")
+    total_duration = end_time - start_time
+    fps = frame_count / total_duration
+    
+    print("\n" + "="*50)
+    print("最终性能统计:")
+    print(f"总帧数: {frame_count} | 总耗时: {total_duration:.2f}s | 平均FPS: {fps:.2f}")
+    print(f"平均预处理时间: {total_preprocess/frame_count*1000:.2f}ms/帧")
+    print(f"平均推理时间: {total_inference/frame_count*1000:.2f}ms/帧")
+    print(f"平均后处理时间: {total_postprocess/frame_count*1000:.2f}ms/帧")
+    print(f"平均帧处理时间: {total_frame/frame_count*1000:.2f}ms/帧")
+    print("="*50)
     
     cap.release()
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
