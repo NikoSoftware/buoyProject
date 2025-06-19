@@ -3,7 +3,8 @@ import numpy as np
 from ais_bench.infer.interface import InferSession
 import time
 import threading
-import simpleaudio as sa
+import sounddevice as sd
+import soundfile as sf
 
 
 # ====================== 配置参数 ======================
@@ -30,9 +31,9 @@ def play_alert():
 def wait_for_sound_end():
     global is_playing
     is_playing = True
-    wave_obj = sa.WaveObject.from_wave_file("./media/seekbar.wav")
-    play_obj = wave_obj.play()
-    play_obj.wait_done()
+    data, fs = sf.read("./media/seekbar.wav")
+    sd.play(data, fs)
+    sd.wait()
     is_playing = False
 
 
