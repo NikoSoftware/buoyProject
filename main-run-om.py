@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from ais_bench.infer.interface import InferSession
 import time
+import pygame
+import threading
 
 # ====================== 配置参数 ======================
 MODEL_PATH = "./runs/train/train6/weights/best.om"
@@ -11,6 +13,35 @@ CONF_THRESH = 0.3  # 置信度阈值
 NMS_THRESH = 0.35  # NMS阈值
 INPUT_SIZE = (640, 640)  # 模型输入尺寸
 SHOW_WINDOW = True  # 控制是否显示实时检测窗口[2,3](@ref)
+
+# 初始化声音引擎
+pygame.mixer.init()
+alert_sound = pygame.mixer.Sound("./media/fastdown.ogg")  # 确保文件存在[9,10](@ref)
+is_playing = False  # 声音播放状态标志
+
+
+def play_alert():
+    """非阻塞播放声音（独立线程）"""
+    global is_playing
+    if not is_playing:
+        is_playing = True
+        alert_sound.play()
+        # 播放结束后自动更新状态
+        threading.Thread(target=wait_for_sound_end).start()
+
+def stop_alert():
+    """停止声音并重置状态"""
+    global is_playing
+    if is_playing:
+        alert_sound.stop()
+        is_playing = False
+
+def wait_for_sound_end():
+    """监听声音结束并更新状态"""
+    global is_playing
+    while pygame.mixer.get_busy():
+        time.sleep(0.1)
+    is_playing = False
 
 
 def preprocess(frame):
@@ -133,6 +164,10 @@ def main():
 
         # 打印检测结果
         print(f"检测到 {len(detections)} 个目标:")
+
+        if len(detections) > 0 :
+            play_alert()
+
         for i, det in enumerate(detections):
             print(f"  目标 {i + 1}: {det['class']} | "
                   f"置信度: {det['confidence']:.4f} | "
@@ -177,6 +212,7 @@ def main():
     if SHOW_WINDOW:
         cv2.destroyAllWindows()
 
+    stop_alert()
 
 if __name__ == '__main__':
     main()
