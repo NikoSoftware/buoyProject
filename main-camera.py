@@ -14,8 +14,11 @@ SHOW_WINDOW = True  # 控制是否显示实时检测窗口
 USE_CAMERA = True  # 设置为True使用USB摄像头，False使用视频文件
 CAMERA_INDEX = 0  # USB摄像头设备索引，默认为0
 RESOLUTION = (1280, 720)  # 摄像头分辨率设置
-ASPECT_RATIO = True  # 保持宽高比进行缩放，解决位置漂移问题[1,2](@ref)
+ASPECT_RATIO = True  # 保持宽高比进行缩放，解决位置漂移问题
 DEBUG_MODE = False  # 调试模式，显示坐标转换信息
+
+# 声明为全局变量（修复SyntaxError的关键）
+global_aspect_ratio = ASPECT_RATIO
 
 
 def preprocess(frame):
@@ -23,7 +26,8 @@ def preprocess(frame):
     # 记录原始尺寸
     orig_h, orig_w = frame.shape[:2]
 
-    if ASPECT_RATIO:
+    # 使用全局变量
+    if global_aspect_ratio:
         # 计算缩放比例并添加灰边
         scale = min(INPUT_SIZE[0] / orig_w, INPUT_SIZE[1] / orig_h)
         new_w, new_h = int(orig_w * scale), int(orig_h * scale)
@@ -74,7 +78,8 @@ def postprocess(outputs, meta):
     # 获取原始参数
     orig_h, orig_w = meta['orig_shape']
 
-    if ASPECT_RATIO and 'offset' in meta:
+    # 使用全局变量
+    if global_aspect_ratio and 'offset' in meta:
         # 还原带灰边的坐标转换
         x_offset, y_offset = meta['offset']
         scale = meta['scale']
@@ -87,7 +92,7 @@ def postprocess(outputs, meta):
         boxes[:, [0, 2]] *= orig_w / INPUT_SIZE[0]
         boxes[:, [1, 3]] *= orig_h / INPUT_SIZE[1]
 
-    # 边界检查（防止坐标越界）[3](@ref)
+    # 边界检查（防止坐标越界）
     boxes[:, 0] = np.clip(boxes[:, 0], 0, orig_w - 1)  # x1
     boxes[:, 1] = np.clip(boxes[:, 1], 0, orig_h - 1)  # y1
     boxes[:, 2] = np.clip(boxes[:, 2], 0, orig_w - 1)  # x2
@@ -120,6 +125,9 @@ def postprocess(outputs, meta):
 
 
 def main():
+    # 声明全局变量（解决SyntaxError的关键）
+    global global_aspect_ratio
+
     # 初始化模型
     session = InferSession(device_id=0, model_path=MODEL_PATH)
 
@@ -223,7 +231,7 @@ def main():
             # 绘制边界框
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-            # 智能调整文本位置（避免超出图像边界）[4](@ref)
+            # 智能调整文本位置（避免超出图像边界）
             text_y = y1 - 10
             if text_y < 10:  # 如果上方空间不足
                 text_y = y2 + 20  # 显示在框下方
@@ -247,7 +255,7 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         # 显示当前模式
-        mode_text = f"Mode: {'Camera' if USE_CAMERA else 'Video'}, Aspect: {'On' if ASPECT_RATIO else 'Off'}"
+        mode_text = f"Mode: {'Camera' if USE_CAMERA else 'Video'}, Aspect: {'On' if global_aspect_ratio else 'Off'}"
         cv2.putText(frame, mode_text, (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
@@ -271,9 +279,9 @@ def main():
                         cap.release()
                         return
             elif key == ord('a'):  # 切换宽高比模式
-                global ASPECT_RATIO
-                ASPECT_RATIO = not ASPECT_RATIO
-                print(f"切换宽高比模式: {'保持宽高比' if ASPECT_RATIO else '直接缩放'}")
+                # 使用全局变量
+                global_aspect_ratio = not global_aspect_ratio
+                print(f"切换宽高比模式: {'保持宽高比' if global_aspect_ratio else '直接缩放'}")
         else:
             # 无头模式下，仅延时1ms保持处理节奏
             time.sleep(0.001)
