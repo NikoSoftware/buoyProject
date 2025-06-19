@@ -6,18 +6,19 @@ import time
 # ====================== 配置参数 ======================
 MODEL_PATH = "./runs/train/train6/weights/best.om"
 VIDEO_PATH = "./datasets/test/30386095338-1-192.mp4"
-CLASS_NAMES = ["buoy"]  # 类别名称
+CLASS_NAMES = ["buoy"]  # 根据你的buoy.yaml修改类别名称
 CONF_THRESH = 0.3  # 置信度阈值
 NMS_THRESH = 0.35  # NMS阈值
 INPUT_SIZE = (640, 640)  # 模型输入尺寸
-SHOW_WINDOW = True  # 是否显示实时检测窗口
-USE_CAMERA = True  # 使用USB摄像头还是视频文件
-CAMERA_INDEX = 0  # USB摄像头设备索引
+SHOW_WINDOW = True  # 控制是否显示实时检测窗口
+USE_CAMERA = True  # 设置为True使用USB摄像头，False使用视频文件
+CAMERA_INDEX = 0  # USB摄像头设备索引，默认为0
 RESOLUTION = (1280, 720)  # 摄像头分辨率设置
-DEBUG_MODE = False  # 调试模式
+ASPECT_RATIO = True  # 保持宽高比进行缩放，解决位置漂移问题
+DEBUG_MODE = False  # 调试模式，显示坐标转换信息
 
-# 全局配置
-global_aspect_ratio = True  # 宽高比处理开关
+# 声明为全局变量（修复SyntaxError的关键）
+global_aspect_ratio = ASPECT_RATIO
 
 
 def preprocess(frame):
@@ -37,14 +38,12 @@ def preprocess(frame):
         x_offset = (INPUT_SIZE[0] - new_w) // 2
         img[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized
 
-        # 保存转换参数（增加缩放因子）
+        # 保存转换参数
         meta = {
             'orig_shape': (orig_h, orig_w),
             'resized_shape': (new_h, new_w),
             'offset': (x_offset, y_offset),
-            'scale': scale,
-            'pad_w': INPUT_SIZE[0] - new_w,
-            'pad_h': INPUT_SIZE[1] - new_h
+            'scale': scale
         }
     else:
         # 直接缩放
@@ -108,7 +107,7 @@ def postprocess(outputs, meta):
         max_scores = np.max(scores, axis=1)
         class_ids = np.argmax(scores, axis=1)
 
-        # 应用OpenCV NMS
+        # 应用OpenCV NMS - 修复索引处理问题
         indices = cv2.dnn.NMSBoxes(
             boxes.tolist(),
             max_scores.tolist(),
@@ -116,8 +115,14 @@ def postprocess(outputs, meta):
             NMS_THRESH
         )
 
+        # 处理不同OpenCV版本返回的索引格式问题
         if indices is not None:
-            indices = indices.flatten()
+            # OpenCV 4.x返回元组，OpenCV 3.x返回numpy数组
+            if isinstance(indices, tuple) or isinstance(indices, list):
+                indices = np.array(indices, dtype=np.int32).flatten()
+            else:
+                indices = indices.flatten()
+
             for idx in indices:
                 confidence = max_scores[idx]
                 if confidence > CONF_THRESH:
@@ -152,8 +157,11 @@ def main():
         return
 
     frame_count = 0
+    total_preprocess = 0.0
+    total_inference = 0.0
+    total_postprocess = 0.0
+    total_frame = 0.0
     start_time = time.time()
-    fps_history = []
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -169,90 +177,143 @@ def main():
         if USE_CAMERA:
             frame = cv2.flip(frame, 1)
 
-        # 记录帧开始时间
+        # ====================== 帧开始计时 ======================
         frame_start = time.time()
         frame_count += 1
 
-        # 预处理
+        # 1. 预处理计时（现在返回预处理图像和元数据）
+        preprocess_start = time.time()
         blob, meta = preprocess(frame)
+        preprocess_time = time.time() - preprocess_start
 
-        # 推理
+        # 2. 推理计时
+        inference_start = time.time()
         outputs = session.infer([blob])
+        inference_time = time.time() - inference_start
 
-        # 后处理
+        # 3. 后处理计时（传入meta数据）
+        postprocess_start = time.time()
         detections = postprocess(outputs, meta)
+        postprocess_time = time.time() - postprocess_start
 
-        # 计算帧处理时间
+        # 4. 帧总处理时间
         frame_time = time.time() - frame_start
-        fps_history.append(1.0 / (frame_time + 1e-6))
-        avg_fps = np.mean(fps_history[-30:])  # 最近30帧的平均FPS
 
-        # 打印时间信息
-        print(f"帧 {frame_count}: {len(detections)}个目标 | FPS: {avg_fps:.1f}")
+        # 累计时间统计
+        total_preprocess += preprocess_time
+        total_inference += inference_time
+        total_postprocess += postprocess_time
+        total_frame += frame_time
 
-        # 在图像上绘制结果
-        display_frame = frame.copy()
+        # ====================== 打印时间信息 ======================
+        print(f"\n帧 {frame_count} 时间统计:")
+        print(f"预处理: {preprocess_time * 1000:.2f}ms | "
+              f"推理: {inference_time * 1000:.2f}ms | "
+              f"后处理: {postprocess_time * 1000:.2f}ms | "
+              f"总帧耗时: {frame_time * 1000:.2f}ms")
+
+        # 打印检测结果
+        print(f"检测到 {len(detections)} 个目标:")
         for i, det in enumerate(detections):
-            x1, y1, x2, y2 = det['box']
+            print(f"  目标 {i + 1}: {det['class']} | "
+                  f"置信度: {det['confidence']:.4f} | "
+                  f"位置: [{det['box'][0]}, {det['box'][1]}, {det['box'][2]}, {det['box'][3]}]")
 
+            # 在图像上绘制结果
+            x1, y1, x2, y2 = det['box']
             # 确保坐标有效
-            x1, y1, x2, y2 = max(0, x1), max(0, y1), min(display_frame.shape[1] - 1, x2), min(
-                display_frame.shape[0] - 1, y2)
+            x1, y1, x2, y2 = max(0, x1), max(0, y1), min(frame.shape[1] - 1, x2), min(frame.shape[0] - 1, y2)
 
             # 绘制边界框（增加颜色对比度）
             color = (0, 255, 0)  # 绿色
             thickness = 2
-            cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, thickness)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
             # 绘制文本背景（提高可读性）
             label = f"{det['class']}: {det['confidence']:.2f}"
-            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, thickness=1)[0]
-            cv2.rectangle(display_frame, (x1, y1 - text_size[1] - 5),
-                          (x1 + text_size[0], y1), color, -1)
+            (label_width, label_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, thickness=1)
+
+            # 智能调整文本位置（避免超出图像边界）
+            text_y = y1 - 5
+            if text_y < label_height + 5:  # 如果上方空间不足
+                text_y = y2 + label_height + 5  # 显示在框下方
+
+            # 绘制文本背景矩形
+            cv2.rectangle(frame,
+                          (x1, text_y - label_height - 5),
+                          (x1 + label_width, text_y + 5),
+                          color, -1)
 
             # 绘制文本
-            cv2.putText(display_frame, label, (x1, y1 - 5),
+            cv2.putText(frame, label,
+                        (x1, text_y - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
 
             # 调试模式下标记角点
             if DEBUG_MODE:
-                cv2.circle(display_frame, (x1, y1), 5, (0, 0, 255), -1)
-                cv2.circle(display_frame, (x2, y2), 5, (255, 0, 0), -1)
+                cv2.circle(frame, (x1, y1), 5, (0, 0, 255), -1)  # 左上角红色
+                cv2.circle(frame, (x2, y2), 5, (255, 0, 0), -1)  # 右下角蓝色
+                print(f"原始尺寸: {meta['orig_shape']}, 转换后坐标: {det['box']}")
 
-        # 显示性能信息
-        fps_text = f"FPS: {avg_fps:.1f}"
-        cv2.putText(display_frame, fps_text, (10, 30),
+        # 显示帧率信息
+        fps_text = f"FPS: {1 / (frame_time + 1e-6):.1f}"
+        cv2.putText(frame, fps_text, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
+        # 显示当前模式
         mode_text = f"Mode: {'Camera' if USE_CAMERA else 'Video'}"
-        cv2.putText(display_frame, mode_text, (10, 60),
+        cv2.putText(frame, mode_text, (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
         aspect_text = f"Aspect: {'On' if global_aspect_ratio else 'Off'}"
-        cv2.putText(display_frame, aspect_text, (10, 90),
+        cv2.putText(frame, aspect_text, (10, 90),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
 
-        # 显示窗口
+        # ====================== 显示控制开关 ======================
         if SHOW_WINDOW:
-            cv2.imshow('Detection', display_frame)
+            # 显示实时结果
+            window_title = 'USB Camera Detection' if USE_CAMERA else 'Video Detection'
+            cv2.imshow(window_title, frame)
+
+            # 检查退出按键
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
-            elif key == ord('a'):
+            elif key == ord(' '):  # 空格键暂停/继续
+                while True:
+                    key = cv2.waitKey(1)
+                    if key == ord(' '):
+                        break
+                    elif key == ord('q'):
+                        cv2.destroyAllWindows()
+                        cap.release()
+                        return
+            elif key == ord('a'):  # 切换宽高比模式
                 global_aspect_ratio = not global_aspect_ratio
                 print(f"切换宽高比模式: {'保持宽高比' if global_aspect_ratio else '直接缩放'}")
+        else:
+            # 无头模式下，仅延时1ms保持处理节奏
+            time.sleep(0.001)
 
-    # 性能统计
-    total_duration = time.time() - start_time
-    avg_fps = frame_count / total_duration
+    # ====================== 最终性能统计 ======================
+    end_time = time.time()
+    total_duration = end_time - start_time
+    fps = frame_count / total_duration
 
     print("\n" + "=" * 50)
-    print(f"总帧数: {frame_count} | 总耗时: {total_duration:.2f}s | 平均FPS: {avg_fps:.2f}")
+    print("最终性能统计:")
+    print(f"总帧数: {frame_count} | 总耗时: {total_duration:.2f}s | 平均FPS: {fps:.2f}")
+    print(f"平均预处理时间: {total_preprocess / frame_count * 1000:.2f}ms/帧")
+    print(f"平均推理时间: {total_inference / frame_count * 1000:.2f}ms/帧")
+    print(f"平均后处理时间: {total_postprocess / frame_count * 1000:.2f}ms/帧")
+    print(f"平均帧处理时间: {total_frame / frame_count * 1000:.2f}ms/帧")
     print("=" * 50)
 
     # 清理资源
     cap.release()
-    cv2.destroyAllWindows()
+    if SHOW_WINDOW:
+        cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
