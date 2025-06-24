@@ -153,6 +153,9 @@ def main():
         # 1. 预处理计时
         preprocess_start = time.time()
         orig_h, orig_w = frame.shape[:2]
+
+        # 打印摄像头 信息
+        print(f"裁剪后分辨率: {orig_w}x{orig_h}")
         blob = preprocess(frame)
         preprocess_time = time.time() - preprocess_start
 
