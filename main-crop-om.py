@@ -10,7 +10,7 @@ MODEL_PATH = "./runs/train/train6/weights/best.om"
 VIDEO_PATH = "./datasets/test/30386095338-1-192.mp4"
 CLASS_NAMES = ["buoy"]  # 根据你的buoy.yaml修改类别名称
 CONF_THRESH = 0.3  # 置信度阈值
-NMS_THRESH = 0.35  # NMS阈值
+NMS_THRESH = 0.65  # NMS阈值
 INPUT_SIZE = (640, 640)  # 模型输入尺寸
 SHOW_WINDOW = False  # 控制是否显示实时检测窗口[2,3](@ref)
 
@@ -31,50 +31,84 @@ def preprocess(frame):
     return img
 
 
-def postprocess(outputs, orig_shape):
-    """后处理：解析检测结果"""
-    # YOLOv11输出格式: [1, 84, 8400]
-    predictions = np.squeeze(outputs[0])  # 移除batch维度
+def postprocess(outputs, orig_shape, input_size=(640, 640)):
+    """优化版后处理：解决坐标偏移问题
+    Args:
+        outputs: 模型原始输出 [1, 84, 8400]
+        orig_shape: 原始图像尺寸 (h, w)
+        input_size: 模型输入尺寸 (w, h)，默认640x640
+    """
+    # 解包尺寸
+    orig_h, orig_w = orig_shape[:2]
+    model_w, model_h = input_size
+
+    # 处理模型输出
+    predictions = np.squeeze(outputs[0])  # 移除batch维度 [84, 8400]
     predictions = predictions.transpose((1, 0))  # 转置为[8400, 84]
 
-    # 获取边界框和类别分数
-    boxes = predictions[:, :4]
+    # 分离边界框和类别分数
+    boxes = predictions[:, :4].copy()  # 使用copy避免原始数据被修改
     scores = predictions[:, 4:]
 
-    # 转换边界框格式 (cx,cy,w,h) -> (x1,y1,x2,y2)
-    boxes[:, 0] = boxes[:, 0] - boxes[:, 2] / 2  # x1
-    boxes[:, 1] = boxes[:, 1] - boxes[:, 3] / 2  # y1
-    boxes[:, 2] = boxes[:, 0] + boxes[:, 2]  # x2
-    boxes[:, 3] = boxes[:, 1] + boxes[:, 3]  # y2
+    # 转换边界框格式 (cx, cy, w, h) -> (x1, y1, x2, y2)
+    # 修复：先计算所有值再赋值，避免中间值覆盖问题
+    x1 = boxes[:, 0] - boxes[:, 2] / 2
+    y1 = boxes[:, 1] - boxes[:, 3] / 2
+    x2 = boxes[:, 0] + boxes[:, 2] / 2
+    y2 = boxes[:, 1] + boxes[:, 3] / 2
 
-    # # 缩放回原始图像尺寸
-    # h, w = orig_shape[:2]
-    # boxes[:, [0, 2]] *= w / INPUT_SIZE[0]
-    # boxes[:, [1, 3]] *= h / INPUT_SIZE[1]
+    # 更新boxes数组
+    boxes[:, 0] = x1
+    boxes[:, 1] = y1
+    boxes[:, 2] = x2
+    boxes[:, 3] = y2
 
-    # 应用NMS - 修复索引访问问题
+    # 关键修复：缩放回原始图像尺寸
+    scale_x = orig_w / model_w
+    scale_y = orig_h / model_h
+    boxes[:, [0, 2]] *= scale_x  # 缩放x坐标
+    boxes[:, [1, 3]] *= scale_y  # 缩放y坐标
+
+    # 应用NMS
+    confidences = np.max(scores, axis=1)
+    class_ids = np.argmax(scores, axis=1)
+
+    # 兼容不同OpenCV版本的NMSBoxes返回值
     indices = cv2.dnn.NMSBoxes(
-        boxes.tolist(),
-        np.max(scores, axis=1).tolist(),
-        CONF_THRESH,
-        NMS_THRESH
+        bboxes=boxes.tolist(),
+        scores=confidences.tolist(),
+        score_threshold=CONF_THRESH,
+        nms_threshold=NMS_THRESH
     )
 
     # 提取有效检测结果
     detections = []
     if indices is not None:
-        for i in indices:
-            # 修复索引访问问题
-            idx = int(i) if hasattr(i, '__int__') else (i[0] if isinstance(i, (list, tuple, np.ndarray)) else i)
+        # 统一索引格式处理
+        if isinstance(indices, np.ndarray):
+            if indices.ndim == 2:  # OpenCV 4.5.3+ 返回二维数组
+                indices = indices[:, 0]
+            indices = indices.astype(int)
 
-            class_id = np.argmax(scores[idx])
-            confidence = scores[idx][class_id]
-            if confidence > CONF_THRESH:
-                detections.append({
-                    "class": CLASS_NAMES[class_id],
-                    "confidence": float(confidence),
-                    "box": [int(x) for x in boxes[idx]]
-                })
+        for idx in indices:
+            class_id = class_ids[idx]
+            confidence = confidences[idx]
+
+            # 获取缩放后的边界框坐标
+            x1, y1, x2, y2 = boxes[idx]
+
+            # 确保坐标在图像范围内
+            x1 = max(0, min(orig_w - 1, x1))
+            y1 = max(0, min(orig_h - 1, y1))
+            x2 = max(0, min(orig_w - 1, x2))
+            y2 = max(0, min(orig_h - 1, y2))
+
+            detections.append({
+                "class": CLASS_NAMES[class_id],
+                "confidence": float(confidence),
+                "box": [int(x1), int(y1), int(x2), int(y2)]
+            })
+
     return detections
 
 
@@ -92,13 +126,6 @@ def rotate_crop_frame(frame):
 
 
     return cropped
-
-
-
-
-
-
-
 
 
 
@@ -153,9 +180,6 @@ def main():
         # 1. 预处理计时
         preprocess_start = time.time()
         orig_h, orig_w = frame.shape[:2]
-
-        # 打印摄像头 信息
-        print(f"裁剪后分辨率: {orig_w}x{orig_h}")
         blob = preprocess(frame)
         preprocess_time = time.time() - preprocess_start
 
