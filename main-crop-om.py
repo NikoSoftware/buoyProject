@@ -229,6 +229,7 @@ def main():
         if SHOW_WINDOW:
             # 显示实时结果
             cv2.imshow('Detection', frame)
+            cv2.resizeWindow('Detection', 640, 640)
             # 检查退出按键
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
