@@ -98,11 +98,7 @@ def rotate_crop_frame(frame):
 
 
 
-def signal_handler(sig, frame):
-    print("\n捕获到Ctrl+Z信号，正在释放摄像头资源...")
-    cap.release()  # 释放摄像头
-    cv2.destroyAllWindows()  # 关闭窗口
-    sys.exit(0)  # 优雅退出
+
 
 
 
@@ -111,11 +107,19 @@ def main():
     # 初始化模型
     session = InferSession(device_id=0, model_path=MODEL_PATH)
 
-    # 注册SIGTSTP信号处理器
-    signal.signal(signal.SIGTSTP, signal_handler)
+
 
     # 打开视频
     cap = cv2.VideoCapture(0)
+    # 注册SIGTSTP信号处理器
+
+    def signal_handler(sig, frame):
+        print("\n捕获到Ctrl+Z信号，正在释放摄像头资源...")
+        cap.release()  # 释放摄像头
+        cv2.destroyAllWindows()  # 关闭窗口
+        sys.exit(0)  # 优雅退出
+    signal.signal(signal.SIGTSTP, signal_handler)
+
     if not cap.isOpened():
         print(f"错误: 无法打开usb摄像头失败")
         return
