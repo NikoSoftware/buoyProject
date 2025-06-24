@@ -12,7 +12,7 @@ CLASS_NAMES = ["buoy"]  # 根据你的buoy.yaml修改类别名称
 CONF_THRESH = 0.3  # 置信度阈值
 NMS_THRESH = 0.65  # NMS阈值
 INPUT_SIZE = (640, 640)  # 模型输入尺寸
-SHOW_WINDOW = False  # 控制是否显示实时检测窗口[2,3](@ref)
+SHOW_WINDOW = True  # 控制是否显示实时检测窗口[2,3](@ref)
 
 
 
