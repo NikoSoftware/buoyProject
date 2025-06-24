@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from ais_bench.infer.interface import InferSession
 import time
+import signal
+import sys
 
 # ====================== 配置参数 ======================
 MODEL_PATH = "./runs/train/train6/weights/best.om"
@@ -11,6 +13,9 @@ CONF_THRESH = 0.3  # 置信度阈值
 NMS_THRESH = 0.35  # NMS阈值
 INPUT_SIZE = (640, 640)  # 模型输入尺寸
 SHOW_WINDOW = False  # 控制是否显示实时检测窗口[2,3](@ref)
+
+
+
 
 
 def preprocess(frame):
@@ -93,12 +98,21 @@ def rotate_crop_frame(frame):
 
 
 
+def signal_handler(sig, frame):
+    print("\n捕获到Ctrl+Z信号，正在释放摄像头资源...")
+    cap.release()  # 释放摄像头
+    cv2.destroyAllWindows()  # 关闭窗口
+    sys.exit(0)  # 优雅退出
+
 
 
 
 def main():
     # 初始化模型
     session = InferSession(device_id=0, model_path=MODEL_PATH)
+
+    # 注册SIGTSTP信号处理器
+    signal.signal(signal.SIGTSTP, signal_handler)
 
     # 打开视频
     cap = cv2.VideoCapture(0)
