@@ -32,23 +32,20 @@ def preprocess(frame):
 
 
 def postprocess(outputs, orig_shape, input_size=(640, 640)):
-    """后处理逻辑重构 - 适配模型输出[1,6,8400]格式"""
+    """后处理逻辑重构 - 适配模型输出[1,5,8400]格式"""
     orig_h, orig_w = orig_shape[:2]
     model_w, model_h = input_size
 
-    # 处理模型输出 [1,6,8400] -> [8400,6]
-    predictions = np.squeeze(outputs[0])  # 移除batch维度 [6,8400]
-    predictions = predictions.transpose((1, 0))  # 转置为[8400,6]
+    # 处理模型输出 [1,5,8400] -> [8400,5]
+    predictions = np.squeeze(outputs[0])  # 移除batch维度 [5,8400]
+    predictions = predictions.transpose((1, 0))  # 转置为[8400,5]
 
-    # 分离边界框(4) + 目标置信度(1) + 类别分数(1)
+    # 分离边界框(4) + 综合置信度(1)
     boxes = predictions[:, :4].copy()  # [x, y, w, h]
-    obj_conf = predictions[:, 4]  # 目标置信度
-    cls_scores = predictions[:, 5]  # 类别分数（二分类时为单值）
+    confidences = predictions[:, 4]  # 直接使用综合置信度
 
-    # 计算最终类别置信度 = 目标置信度 * 类别分数
-    confidences = obj_conf * cls_scores
-
-    class_ids = 0
+    # 单类别检测场景下类别ID固定为0
+    class_ids = np.zeros(len(confidences), dtype=int)
 
     # 转换边界框格式 (cx, cy, w, h) -> (x1, y1, x2, y2)
     x1 = boxes[:, 0] - boxes[:, 2] / 2
@@ -63,7 +60,7 @@ def postprocess(outputs, orig_shape, input_size=(640, 640)):
     boxes[:, [0, 2]] *= scale_x
     boxes[:, [1, 3]] *= scale_y
 
-    # ============== 关键修改：统一处理NMS返回值 ==============
+    # NMS处理
     indices = cv2.dnn.NMSBoxes(
         bboxes=boxes.tolist(),
         scores=confidences.tolist(),
@@ -71,7 +68,7 @@ def postprocess(outputs, orig_shape, input_size=(640, 640)):
         nms_threshold=NMS_THRESH
     )
 
-    # 处理不同格式的返回值（元组/数组）
+    # 统一NMS返回值格式
     if indices is not None:
         indices_np = np.array(indices)
         if indices_np.ndim == 2:  # 处理二维数组
@@ -79,14 +76,15 @@ def postprocess(outputs, orig_shape, input_size=(640, 640)):
         indices_flat = indices_np.flatten().astype(int)
     else:
         indices_flat = np.array([], dtype=int)
-    # ============== 修改结束 ==============
 
+    # 组装检测结果
     detections = []
     for idx in indices_flat:
         class_id = class_ids[idx]
         confidence = confidences[idx]
         x1, y1, x2, y2 = boxes[idx]
 
+        # 确保坐标在图像范围内
         x1 = max(0, min(orig_w - 1, x1))
         y1 = max(0, min(orig_h - 1, y1))
         x2 = max(0, min(orig_w - 1, x2))
