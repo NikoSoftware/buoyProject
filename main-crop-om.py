@@ -22,58 +22,48 @@ def preprocess(frame):
     """图像预处理"""
     # 转换颜色空间和调整尺寸
     img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    #img = cv2.resize(img, INPUT_SIZE)
 
     # 归一化并转换格式
     img = img.astype(np.float32) / 255.0
     img = np.transpose(img, (2, 0, 1))  # HWC -> CHW
     img = np.expand_dims(img, axis=0)  # 添加batch维度
+    img = np.ascontiguousarray(img)  # 关键修复：确保内存连续[1](@ref)
     return img
 
 
 def postprocess(outputs, orig_shape, input_size=(640, 640)):
-    """优化版后处理：解决坐标偏移问题
-    Args:
-        outputs: 模型原始输出 [1, 84, 8400]
-        orig_shape: 原始图像尺寸 (h, w)
-        input_size: 模型输入尺寸 (w, h)，默认640x640
-    """
-    # 解包尺寸
+    """后处理逻辑重构 - 适配模型输出[1,6,8400]格式"""
     orig_h, orig_w = orig_shape[:2]
     model_w, model_h = input_size
 
-    # 处理模型输出
-    predictions = np.squeeze(outputs[0])  # 移除batch维度 [84, 8400]
-    predictions = predictions.transpose((1, 0))  # 转置为[8400, 84]
+    # 处理模型输出 [1,6,8400] -> [8400,6]
+    predictions = np.squeeze(outputs[0])  # 移除batch维度 [6,8400]
+    predictions = predictions.transpose((1, 0))  # 转置为[8400,6]
 
-    # 分离边界框和类别分数
-    boxes = predictions[:, :4].copy()  # 使用copy避免原始数据被修改
-    scores = predictions[:, 4:]
+    # 分离边界框(4) + 目标置信度(1) + 类别分数(1)
+    boxes = predictions[:, :4].copy()  # [x, y, w, h]
+    obj_conf = predictions[:, 4]  # 目标置信度
+    cls_scores = predictions[:, 5]  # 类别分数（二分类时为单值）
+
+    # 计算最终类别置信度 = 目标置信度 * 类别分数
+    confidences = obj_conf * cls_scores
+
+    class_ids = 0
 
     # 转换边界框格式 (cx, cy, w, h) -> (x1, y1, x2, y2)
-    # 修复：先计算所有值再赋值，避免中间值覆盖问题
     x1 = boxes[:, 0] - boxes[:, 2] / 2
     y1 = boxes[:, 1] - boxes[:, 3] / 2
     x2 = boxes[:, 0] + boxes[:, 2] / 2
     y2 = boxes[:, 1] + boxes[:, 3] / 2
+    boxes = np.column_stack([x1, y1, x2, y2])
 
-    # 更新boxes数组
-    boxes[:, 0] = x1
-    boxes[:, 1] = y1
-    boxes[:, 2] = x2
-    boxes[:, 3] = y2
-
-    # 关键修复：缩放回原始图像尺寸
+    # 缩放回原始图像尺寸
     scale_x = orig_w / model_w
     scale_y = orig_h / model_h
-    boxes[:, [0, 2]] *= scale_x  # 缩放x坐标
-    boxes[:, [1, 3]] *= scale_y  # 缩放y坐标
+    boxes[:, [0, 2]] *= scale_x
+    boxes[:, [1, 3]] *= scale_y
 
-    # 应用NMS
-    confidences = np.max(scores, axis=1)
-    class_ids = np.argmax(scores, axis=1)
-
-    # 兼容不同OpenCV版本的NMSBoxes返回值
+    # ============== 关键修改：统一处理NMS返回值 ==============
     indices = cv2.dnn.NMSBoxes(
         bboxes=boxes.tolist(),
         scores=confidences.tolist(),
@@ -81,33 +71,32 @@ def postprocess(outputs, orig_shape, input_size=(640, 640)):
         nms_threshold=NMS_THRESH
     )
 
-    # 提取有效检测结果
-    detections = []
+    # 处理不同格式的返回值（元组/数组）
     if indices is not None:
-        # 统一索引格式处理
-        if isinstance(indices, np.ndarray):
-            if indices.ndim == 2:  # OpenCV 4.5.3+ 返回二维数组
-                indices = indices[:, 0]
-            indices = indices.astype(int)
+        indices_np = np.array(indices)
+        if indices_np.ndim == 2:  # 处理二维数组
+            indices_np = indices_np[:, 0]
+        indices_flat = indices_np.flatten().astype(int)
+    else:
+        indices_flat = np.array([], dtype=int)
+    # ============== 修改结束 ==============
 
-        for idx in indices:
-            class_id = class_ids[idx]
-            confidence = confidences[idx]
+    detections = []
+    for idx in indices_flat:
+        class_id = class_ids[idx]
+        confidence = confidences[idx]
+        x1, y1, x2, y2 = boxes[idx]
 
-            # 获取缩放后的边界框坐标
-            x1, y1, x2, y2 = boxes[idx]
+        x1 = max(0, min(orig_w - 1, x1))
+        y1 = max(0, min(orig_h - 1, y1))
+        x2 = max(0, min(orig_w - 1, x2))
+        y2 = max(0, min(orig_h - 1, y2))
 
-            # 确保坐标在图像范围内
-            x1 = max(0, min(orig_w - 1, x1))
-            y1 = max(0, min(orig_h - 1, y1))
-            x2 = max(0, min(orig_w - 1, x2))
-            y2 = max(0, min(orig_h - 1, y2))
-
-            detections.append({
-                "class": CLASS_NAMES[class_id],
-                "confidence": float(confidence),
-                "box": [int(x1), int(y1), int(x2), int(y2)]
-            })
+        detections.append({
+            "class": CLASS_NAMES[class_id],
+            "confidence": float(confidence),
+            "box": [int(x1), int(y1), int(x2), int(y2)]
+        })
 
     return detections
 
@@ -212,9 +201,9 @@ def main():
         # 打印检测结果
         print(f"检测到 {len(detections)} 个目标:")
         for i, det in enumerate(detections):
-            print(f"  目标 {i + 1}: {det['class']} | "
-                  f"置信度: {det['confidence']:.4f} | "
-                  f"位置: [{det['box'][0]}, {det['box'][1]}, {det['box'][2]}, {det['box'][3]}]")
+            # print(f"  目标 {i + 1}: {det['class']} | "
+            #       f"置信度: {det['confidence']:.4f} | "
+            #       f"位置: [{det['box'][0]}, {det['box'][1]}, {det['box'][2]}, {det['box'][3]}]")
 
             # 在图像上绘制结果
             x1, y1, x2, y2 = det['box']
@@ -236,20 +225,6 @@ def main():
         else:
             # 无头模式下，仅延时1ms保持处理节奏
             time.sleep(0.001)
-
-    # ====================== 最终性能统计 ======================
-    # end_time = time.time()
-    # total_duration = end_time - start_time
-    # fps = frame_count / total_duration
-    #
-    # print("\n" + "=" * 50)
-    # print("最终性能统计:")
-    # print(f"总帧数: {frame_count} | 总耗时: {total_duration:.2f}s | 平均FPS: {fps:.2f}")
-    # print(f"平均预处理时间: {total_preprocess / frame_count * 1000:.2f}ms/帧")
-    # print(f"平均推理时间: {total_inference / frame_count * 1000:.2f}ms/帧")
-    # print(f"平均后处理时间: {total_postprocess / frame_count * 1000:.2f}ms/帧")
-    # print(f"平均帧处理时间: {total_frame / frame_count * 1000:.2f}ms/帧")
-    # print("=" * 50)
 
     # 清理资源
     cap.release()
