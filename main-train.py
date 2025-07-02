@@ -3,17 +3,17 @@ from ultralytics import YOLO
 
 
 def run():
-    model = YOLO("./yolo11n.pt")
+    model = YOLO("./yolo11s.pt")
 
 
     train_results = model.train(
         data="buoy.yaml",
         epochs=100,  # Number of training epochs
         imgsz=640,  # Image size for training
-        device="cpu",  # Device to run on (e.g., 'cpu', 0, [0,1,2,3])
+        device="cuda",  # Device to run on (e.g., 'cpu', 0, [0,1,2,3])
         batch=10,
         save=True,
-        save_period=20,
+        save_period=50,
         project="runs/train",
         workers=20
     )
