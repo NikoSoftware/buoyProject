@@ -4,7 +4,7 @@ import onnx  # 添加ONNX库支持
 
 def run():
     # 加载预训练模型
-    model = YOLO("./runs/train/train6/weights/best.pt")
+    model = YOLO("./runs/train/train2/weights/best.pt")
 
 
     # ---- 添加ONNX导出部分 ----
